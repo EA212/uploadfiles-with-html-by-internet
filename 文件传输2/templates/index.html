@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>批量文件上传</title>
+  <!-- 使用url_for函数引用静态资源 -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap.min.css') }}">
+  <style>
+.upload-drop-zone {
+    border: 2px dashed #007bff;
+    border-radius: 5px;
+    padding: 50px;
+    text-align: center;
+    color: #6c757d;
+    background-color: #f8f9fa;
+    transition: all 0.3s ease;
+  }
+
+.upload-drop-zone.dragover {
+    background-color: #e9ecef;
+    border-color: #0056b3;
+    color: #0056b3;
+  }
+
+.btn-large {
+    font-size: 1.5rem;
+    padding: 1rem 2rem;
+    margin-bottom: 1rem;
+  }
+
+.file-list-item {
+      margin-bottom: 0.5rem;
+    }
+
+ .progress-text {
+      min-width: 200px;
+    }
+
+    /* 确保表格和拖放区宽度一致 */
+ .table-responsive {
+      width: 100%;
+    }
+
+ .table-header,
+ .target-path-row {
+      display: table;
+      width: 100%;
+      table-layout: fixed;
+    }
+
+ .table-header th,
+ .target-path-row td {
+      display: table-cell;
+      padding: 8px;
+      vertical-align: middle;
+      border: 1px solid #dee2e6;
+    }
+
+ .target-path-row td:first-child {
+      font-weight: bold;
+    }
+
+ .select-button {
+      float: right;
+    }
+
+    /* 上传按钮样式 */
+    #uploadButton:disabled {
+      background-color: #dc3545; /* 红色 */
+      border-color: #dc3545;
+    }
+
+    #uploadButton:not(:disabled) {
+      background-color: #28a745; /* 绿色 */
+      border-color: #28a745;
+    }
+
+    /* 媒体查询 - 针对不同屏幕尺寸 */
+
+    /* 超小屏幕 (xs) - 小于576px */
+    @media (max-width: 767.98px) {
+   .upload-drop-zone {
+        display: none;
+        /* 在手机屏幕上隐藏拖放区 */
+      }
+
+   .btn-large {
+        font-size: 1rem;
+        padding: 0.75rem 1.5rem;
+      }
+
+   .table-header th,
+   .target-path-row td {
+        font-size: 0.875rem;
+      }
+    }
+
+    /* 中等屏幕 (md) - 768px 及以上 */
+    @media (min-width: 768px) {
+   .upload-drop-zone {
+        padding: 50px;
+      }
+
+   .btn-large {
+        font-size: 1.5rem;
+        padding: 1rem 2rem;
+      }
+
+   .table-header th,
+   .target-path-row td {
+        font-size: 1.125rem;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="container mt-5">
+    <div class="row">
+      <div class="col-md-8 offset-md-2">
+        <h2 class="text-center mb-4">拖拽或选择文件进行上传</h2>
+        <!-- 拖放区 -->
+        <div id="drop-zone" class="upload-drop-zone mb-4">
+          <p class="lead">将文件或文件夹拖到这里，或者点击下面的按钮选择。</p>
+        </div>
+        <!-- 文件选择按钮 -->
+        <div class="d-flex justify-content-center mb-4">
+          <button id="selectFilesBtn" class="btn btn-primary btn-large me-2">添加文件</button>
+          <button id="selectFolderBtn" class="btn btn-secondary btn-large">添加文件夹</button>
+        </div>
+        <!-- 上传按钮 -->
+        <button id="uploadButton" class="btn btn-success btn-large w-100 mt-4" disabled>开始上传</button>
+        <!-- 文件列表表格 -->
+        <div class="table-responsive">
+          <table class="table table-bordered file-table w-100" id="fileTable">
+            <thead>
+              <tr>
+                <th scope="col">#</th>
+                <th scope="col">文件名</th>
+                <th scope="col">文件大小</th>
+                <th scope="col">文件路径</th>
+                <th scope="col">操作</th>
+                <th scope="col">上传进度</th>
+              </tr>
+            </thead>
+            <tbody id="fileListBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/axios.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', async function () {
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('fileInput');
+    const folderInput = document.getElementById('folderInput');
+    const selectFilesBtn = document.getElementById('selectFilesBtn');
+    const selectFolderBtn = document.getElementById('selectFolderBtn');
+    const uploadButton = document.getElementById('uploadButton');
+    const fileListBody = document.getElementById('fileListBody');
+
+    let selectedFiles = new Map(); // 使用Map来存储文件，防止重复
+
+    // 初始化文件列表显示
+    updateFileList();
+
+    // 处理拖放事件
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, preventDefaults, false);
+    });
+
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+
+    // 当文件被拖入时改变样式
+    dropZone.addEventListener('dragover', () => {
+        dropZone.classList.add('dragover');
+    }, false);
+
+    // 当文件离开或被放下时恢复样式
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => {
+            dropZone.classList.remove('dragover');
+        }, false);
+    });
+
+    // 添加文件选择功能
+    selectFilesBtn.addEventListener('click', () => {
+        fileInput.click();
+    });
+
+    // 添加文件夹选择功能
+    selectFolderBtn.addEventListener('click', () => {
+        folderInput.click();
+    });
+
+    // 更新文件列表并检查是否允许上传
+    function updateFileList() {
+        let hasFiles = selectedFiles.size > 0;
+        uploadButton.disabled = !hasFiles;
+
+        fileListBody.innerHTML = ''; // 清空现有文件列表
+
+        Array.from(selectedFiles.values()).forEach((file, index) => {
+            // 获取文件路径，优先使用 webkitRelativePath，否则仅显示文件名
+            const filePath = file.webkitRelativePath || file.name;
+
+            const row = `
+                <tr data-file-name="${file.name}">
+                    <td>${index + 1}</td>
+                    <td>${file.name}</td>
+                    <td>${(file.size / 1024).toFixed(2)} KB</td>
+                    <td>${filePath}</td>
+                    <td><button class="btn btn-danger btn-sm remove-file" data-file-name="${file.name}">移除</button></td>
+                    <td>
+                        <div class="progress">
+                            <div class="progress-bar" role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                        </div>
+                    </td>
+                </tr>
+            `;
+            fileListBody.insertAdjacentHTML('beforeend', row);
+        });
+    }
+
+    // 添加文件到Map中
+    function addFilesToMap(files) {
+        for (const file of files) {
+            if (!selectedFiles.has(file.name)) {
+                selectedFiles.set(file.name, file);
+            }
+        }
+        updateFileList();
+    }
+
+    // 处理文件输入变化（文件）
+    fileInput.addEventListener('change', (event) => {
+        addFilesToMap(event.target.files);
+        event.target.value = ''; // Reset the input to allow selecting the same file again
+    });
+
+    // 处理文件输入变化（文件夹）
+    folderInput.addEventListener('change', (event) => {
+        addFilesToMap(event.target.files);
+        event.target.value = ''; // Reset the input to allow selecting the same folder again
+    });
+
+    // 处理拖放区文件接收
+    dropZone.addEventListener('drop', (event) => {
+        addFilesToMap(event.dataTransfer.files);
+    });
+
+    // 移除文件功能
+    fileListBody.addEventListener('click', (event) => {
+        if (event.target.classList.contains('remove-file')) {
+            const fileName = event.target.getAttribute('data-file-name');
+            selectedFiles.delete(fileName);
+            updateFileList();
+        }
+    });
+
+    // 异步获取上传URL
+    async function fetchUploadUrl() {
+        try {
+            const response = await fetch('/api/get-upload-url', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            const data = await response.json();
+            return data.uploadUrl;
+        } catch (error) {
+            console.error("Error fetching upload URL:", error);
+            throw error;
+        }
+    }
+
+    // 初始化时获取上传URL并更新全局变量或其他地方使用的上传地址
+    let uploadUrl = '';
+    try {
+        uploadUrl = await fetchUploadUrl();
+        console.log("Upload URL:", uploadUrl);
+    } catch (error) {
+        alert("无法获取上传URL，请稍后再试。");
+        return;
+    }
+
+    // 真实上传文件并显示进度（使用axios示例）
+    uploadButton.addEventListener('click', async () => {
+        if (!uploadUrl) {
+            alert("无法获取上传URL，请稍后再试。");
+            return;
+        }
+
+        const formData = new FormData();
+        Array.from(selectedFiles.values()).forEach(file => {
+            formData.append('files[]', file);
+        });
+
+        try {
+            const response = await axios.post(uploadUrl, formData, {
+                onUploadProgress: function (progressEvent) {
+                    const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+                    const progressBars = document.querySelectorAll('.progress-bar');
+                    progressBars.forEach(bar => {
+                        bar.style.width = percentCompleted + '%';
+                        bar.setAttribute('aria-valuenow', percentCompleted);
+                    });
+                }
+            });
+
+            console.log('上传成功', response);
+            // 清空已选文件，并更新文件列表显示
+            selectedFiles.clear();
+            updateFileList();
+            // 可以在这里添加成功后的提示等逻辑，比如通知用户上传成功
+        } catch (error) {
+            console.log('上传失败', error);
+            // 可以添加失败提示逻辑
+        }
+    });
+});
+
+  </script>
+
+  <!-- 文件选择输入 -->
+  <input type="file" id="fileInput" multiple accept="*/*" style="display: none;">
+  <input type="file" id="folderInput" webkitdirectory multiple accept="*/*" style="display: none;">
+
+</body>
+
+</html>
